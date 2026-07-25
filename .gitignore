@@ -1,0 +1,29 @@
+# Python virtual environment
+venv/
+ENV/
+env/
+.env
+
+# Python compilation and cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.ipynb_checkpoints/
+
+# Operating system files
+.DS_Store
+Thumbs.db
+
+# Streamlit secrets and runtime files
+.streamlit/secrets.toml
+.streamlit/config.toml
+
+# MediaPipe / ML Models (exclude large pre-trained model files)
+models/*.task
+
+# Temporary videos
+videos/
+scratch/
+logs/
