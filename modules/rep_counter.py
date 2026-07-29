@@ -59,6 +59,10 @@ class SquatTracker(BaseExerciseTracker):
         self.right_hip_smoother = MovingAverage(self.window_size)
         self.avg_hip_smoother = MovingAverage(self.window_size)
         
+        # Smoothers for elbow angles
+        self.left_elbow_smoother = MovingAverage(self.window_size)
+        self.right_elbow_smoother = MovingAverage(self.window_size)
+        
         # Smoothers for vertical positions (to compute velocity)
         self.shoulder_y_smoother = MovingAverage(self.window_size)
         self.hip_y_smoother = MovingAverage(self.window_size)
@@ -74,6 +78,8 @@ class SquatTracker(BaseExerciseTracker):
         self.smoothed_left_hip = 180.0
         self.smoothed_right_hip = 180.0
         self.smoothed_avg_hip = 180.0
+        self.smoothed_left_elbow = 180.0
+        self.smoothed_right_elbow = 180.0
         
         # State threshold angles (in degrees)
         self.angle_standing = 160.0    # Above this is standing
@@ -84,7 +90,7 @@ class SquatTracker(BaseExerciseTracker):
         # Torso vertical velocity threshold (normalized y-coordinates per frame)
         self.velocity_threshold = 0.0015
         
-    def update(self, l_knee, r_knee, l_hip, r_hip, shoulder_y, hip_y):
+    def update(self, l_knee, r_knee, l_hip, r_hip, shoulder_y, hip_y, l_elbow=None, r_elbow=None):
         """
         Updates smoothers, calculates torso velocity and direction, 
         and updates the finite state machine.
@@ -96,6 +102,8 @@ class SquatTracker(BaseExerciseTracker):
             r_hip (float or None): Right hip angle
             shoulder_y (float or None): Average shoulder Y coordinate (normalized)
             hip_y (float or None): Average hip Y coordinate (normalized)
+            l_elbow (float or None): Left elbow angle
+            r_elbow (float or None): Right elbow angle
         """
         # 1. Update Angle Smoothers
         if l_knee is not None:
@@ -120,6 +128,11 @@ class SquatTracker(BaseExerciseTracker):
         elif r_hip is not None:
             self.avg_hip_smoother.add(r_hip)
             
+        if l_elbow is not None:
+            self.left_elbow_smoother.add(l_elbow)
+        if r_elbow is not None:
+            self.right_elbow_smoother.add(r_elbow)
+            
         # Retrieve current smoothed values
         self.smoothed_left_knee = self.left_knee_smoother.get() if l_knee is not None else 180.0
         self.smoothed_right_knee = self.right_knee_smoother.get() if r_knee is not None else 180.0
@@ -127,6 +140,8 @@ class SquatTracker(BaseExerciseTracker):
         self.smoothed_left_hip = self.left_hip_smoother.get() if l_hip is not None else 180.0
         self.smoothed_right_hip = self.right_hip_smoother.get() if r_hip is not None else 180.0
         self.smoothed_avg_hip = self.avg_hip_smoother.get()
+        self.smoothed_left_elbow = self.left_elbow_smoother.get() if l_elbow is not None else 180.0
+        self.smoothed_right_elbow = self.right_elbow_smoother.get() if r_elbow is not None else 180.0
         
         # 2. Update Position Smoothers and Calculate Velocity
         current_shoulder_y = None

@@ -4,6 +4,7 @@ import time
 from modules.pose_detector import PoseDetector
 from modules.rep_counter import SquatTracker
 from modules.geometry import calculate_angle
+from modules.debug_panel import render_debug_panel
 
 # ---------------------------------------------------------
 # Page Configuration & Aesthetics
@@ -162,8 +163,18 @@ camera_index = st.sidebar.selectbox(
 
 # Pose overlay controls
 st.sidebar.markdown("### 🏃 Pose Estimation")
+
+# Initialize session state for debug panel visibility toggle
+if "show_debug" not in st.session_state:
+    st.session_state.show_debug = False
+
 if st.sidebar.button("Reset Rep Counter", width="stretch"):
     st.session_state.squat_counter.reset()
+
+debug_btn_label = "Hide Debug Panel" if st.session_state.show_debug else "Show Debug Panel"
+if st.sidebar.button(debug_btn_label, width="stretch"):
+    st.session_state.show_debug = not st.session_state.show_debug
+
 enable_pose = st.sidebar.toggle("Show Skeleton Overlay", value=True, help="Toggle drawing 33 pose skeletal landmarks on stream.")
 
 # Advanced Pose configuration
@@ -203,6 +214,9 @@ with col2:
     knee_angle_placeholder = st.empty()
     fps_placeholder = st.empty()
     resolution_placeholder = st.empty()
+    
+    # Placeholder for the dynamic Pose Debug Panel
+    debug_placeholder = st.empty()
     
     st.markdown("""
     <div class="info-card">
@@ -280,6 +294,9 @@ if run_feed:
                 
                 # Convert BGR (OpenCV default) to RGB (Streamlit & MediaPipe requirement)
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                
+                # Initialize variables for debug panel and calculations
+                landmarks = None
                 
                 # Run pose detection if enabled
                 if enable_pose:
@@ -360,14 +377,32 @@ if run_feed:
                                 (r_knee['x'], r_knee['y'])
                             )
                             
-                        # Update the tracker
+                        l_elbow_angle = None
+                        if l_shoulder_valid and landmarks[13]['visibility'] >= min_vis_conf and landmarks[15]['visibility'] >= min_vis_conf:
+                            l_elbow_angle = calculate_angle(
+                                (l_shoulder['x'], l_shoulder['y']),
+                                (landmarks[13]['x'], landmarks[13]['y']),
+                                (landmarks[15]['x'], landmarks[15]['y'])
+                            )
+                            
+                        r_elbow_angle = None
+                        if r_shoulder_valid and landmarks[14]['visibility'] >= min_vis_conf and landmarks[16]['visibility'] >= min_vis_conf:
+                            r_elbow_angle = calculate_angle(
+                                (r_shoulder['x'], r_shoulder['y']),
+                                (landmarks[14]['x'], landmarks[14]['y']),
+                                (landmarks[16]['x'], landmarks[16]['y'])
+                            )
+                            
+                        # Update the tracker with both knees, hips, shoulders, and elbows
                         st.session_state.squat_counter.update(
                             l_knee=l_knee_angle,
                             r_knee=r_knee_angle,
                             l_hip=l_hip_angle,
                             r_hip=r_hip_angle,
                             shoulder_y=shoulder_y_norm,
-                            hip_y=hip_y_norm
+                            hip_y=hip_y_norm,
+                            l_elbow=l_elbow_angle,
+                            r_elbow=r_elbow_angle
                         )
                         
                     # Draw skeletal overlay landmarks and HUD overlay onto the RGB frame
@@ -435,6 +470,7 @@ if run_feed:
                 
                 # Calculate Frame Rate (FPS)
                 current_time = time.time()
+                fps = 0.0
                 if prev_time > 0:
                     fps = 1.0 / (current_time - prev_time)
                     fps_placeholder.markdown(f"""
@@ -444,6 +480,22 @@ if run_feed:
                     </div>
                     """, unsafe_allow_html=True)
                 prev_time = current_time
+                
+                # Render live Debug Panel if enabled
+                if st.session_state.show_debug:
+                    visibilities = {}
+                    if landmarks:
+                        visibilities = {lm['id']: lm['visibility'] for lm in landmarks}
+                    
+                    render_debug_panel(
+                        container=debug_placeholder,
+                        fps=fps,
+                        tracker=st.session_state.squat_counter,
+                        visibilities=visibilities,
+                        min_vis_conf=min_vis_conf
+                    )
+                else:
+                    debug_placeholder.empty()
                 
                 # A very short sleep to yield CPU cycles for UI rendering
                 time.sleep(0.01)
@@ -463,6 +515,7 @@ if run_feed:
             rep_placeholder.empty()
             phase_placeholder.empty()
             knee_angle_placeholder.empty()
+            debug_placeholder.empty()
             fps_placeholder.empty()
             resolution_placeholder.empty()
             feed_placeholder.warning("Webcam stream stopped.")
@@ -477,6 +530,7 @@ else:
     rep_placeholder.empty()
     phase_placeholder.empty()
     knee_angle_placeholder.empty()
+    debug_placeholder.empty()
     
     feed_placeholder.markdown("""
     <div style="border: 2px dashed rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 5rem 2rem; text-align: center; background: rgba(255,255,255,0.01);">
