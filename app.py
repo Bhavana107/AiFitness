@@ -5,6 +5,10 @@ from modules.pose_detector import PoseDetector
 from modules.rep_counter import SquatTracker
 from modules.geometry import calculate_angle
 from modules.debug_panel import render_debug_panel
+from modules.database import init_db, log_workout, get_workout_history, clear_workout_history
+
+# Initialize database
+init_db()
 
 # ---------------------------------------------------------
 # Page Configuration & Aesthetics
@@ -135,6 +139,11 @@ st.markdown("""
 if "squat_counter" not in st.session_state or not isinstance(st.session_state.squat_counter, SquatTracker):
     st.session_state.squat_counter = SquatTracker()
 
+if "session_start_time" not in st.session_state:
+    st.session_state.session_start_time = None
+if "fps_history" not in st.session_state:
+    st.session_state.fps_history = []
+
 # ---------------------------------------------------------
 # UI Header
 # ---------------------------------------------------------
@@ -168,8 +177,42 @@ st.sidebar.markdown("### 🏃 Pose Estimation")
 if "show_debug" not in st.session_state:
     st.session_state.show_debug = False
 
-if st.sidebar.button("Reset Rep Counter", width="stretch"):
-    st.session_state.squat_counter.reset()
+# Reset and Save controls
+col_reset, col_save = st.sidebar.columns(2)
+with col_reset:
+    if st.button("Reset Reps", use_container_width=True):
+        st.session_state.squat_counter.reset()
+        st.session_state.session_start_time = time.time() if run_feed else None
+        st.session_state.fps_history = []
+        st.toast("Rep counter reset!")
+with col_save:
+    if st.button("Save Session", use_container_width=True):
+        tracker = st.session_state.squat_counter
+        if tracker.rep_count > 0 or (st.session_state.session_start_time is not None and (time.time() - st.session_state.session_start_time) > 2.0):
+            duration = 0.0
+            if st.session_state.session_start_time is not None:
+                duration = time.time() - st.session_state.session_start_time
+            
+            avg_fps = 0.0
+            if st.session_state.fps_history:
+                avg_fps = sum(st.session_state.fps_history) / len(st.session_state.fps_history)
+                
+            success = log_workout(
+                exercise="Squats",
+                reps=tracker.rep_count,
+                duration=duration,
+                avg_fps=avg_fps
+            )
+            if success:
+                st.success(f"Session saved: {tracker.rep_count} reps!")
+                tracker.reset()
+                st.session_state.session_start_time = time.time() if run_feed else None
+                st.session_state.fps_history = []
+                st.rerun()
+            else:
+                st.warning("Nothing to save yet.")
+        else:
+            st.warning("No reps completed to save.")
 
 debug_btn_label = "Hide Debug Panel" if st.session_state.show_debug else "Show Debug Panel"
 if st.sidebar.button(debug_btn_label, width="stretch"):
@@ -279,8 +322,10 @@ if run_feed:
         </div>
         """, unsafe_allow_html=True)
         
-        prev_time = 0
-        
+        if st.session_state.session_start_time is None:
+            st.session_state.session_start_time = time.time()
+            st.session_state.fps_history = []
+            
         try:
             while run_feed:
                 ret, frame = cap.read()
@@ -473,6 +518,7 @@ if run_feed:
                 fps = 0.0
                 if prev_time > 0:
                     fps = 1.0 / (current_time - prev_time)
+                    st.session_state.fps_history.append(fps)
                     fps_placeholder.markdown(f"""
                     <div class="metric-box">
                         <div class="metric-value">{fps:.1f}</div>
@@ -506,6 +552,27 @@ if run_feed:
             # ALWAYS release the capture device to avoid lockups on next run
             cap.release()
             
+            # Auto-save workout if stream is stopped and reps are > 0
+            if st.session_state.session_start_time is not None:
+                tracker = st.session_state.squat_counter
+                if tracker.rep_count > 0:
+                    duration = time.time() - st.session_state.session_start_time
+                    avg_fps = 0.0
+                    if st.session_state.fps_history:
+                        avg_fps = sum(st.session_state.fps_history) / len(st.session_state.fps_history)
+                    
+                    log_workout(
+                        exercise="Squats",
+                        reps=tracker.rep_count,
+                        duration=duration,
+                        avg_fps=avg_fps
+                    )
+                    st.toast(f"Auto-saved session: {tracker.rep_count} squats!")
+                
+                # Clear session state variables
+                st.session_state.session_start_time = None
+                st.session_state.fps_history = []
+
             # Clean up stats UI when stopped
             status_placeholder.markdown("""
             <div class="status-badge status-inactive">
@@ -538,3 +605,34 @@ else:
         <p style="color: #6B7280; font-size: 0.95rem; margin-bottom: 1.5rem;">The webcam stream is currently disabled. Toggle the live feed in the sidebar to start streaming.</p>
     </div>
     """, unsafe_allow_html=True)
+
+# ---------------------------------------------------------
+# Workout History Section
+# ---------------------------------------------------------
+st.markdown("---")
+st.markdown("### 📊 Workout History")
+
+# Retrieve and display history database table
+df_history = get_workout_history()
+
+if not df_history.empty:
+    st.dataframe(
+        df_history, 
+        use_container_width=True,
+        column_config={
+            "Date": st.column_config.TextColumn("Date"),
+            "Time": st.column_config.TextColumn("Time"),
+            "Exercise": st.column_config.TextColumn("Exercise"),
+            "Reps": st.column_config.NumberColumn("Reps", format="%d"),
+            "Duration (s)": st.column_config.NumberColumn("Duration (s)", format="%.1f s"),
+            "Avg FPS": st.column_config.NumberColumn("Avg FPS", format="%.1f")
+        }
+    )
+    
+    # Optional clear history action
+    if st.button("Delete Workout History", use_container_width=False):
+        clear_workout_history()
+        st.toast("Workout history cleared successfully.")
+        st.rerun()
+else:
+    st.info("No workouts recorded yet. Start training to log your first session!")

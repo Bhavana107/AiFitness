@@ -27,3 +27,8 @@ models/*.task
 videos/
 scratch/
 logs/
+
+# Database files
+*.db
+*.sqlite
+
