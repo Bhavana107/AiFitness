@@ -1,6 +1,21 @@
 import streamlit as st
 import cv2
 import time
+import importlib
+
+# Force reload local modules to prevent Streamlit caching old class definitions
+import modules.pose_detector
+import modules.rep_counter
+import modules.geometry
+import modules.debug_panel
+import modules.database
+
+importlib.reload(modules.pose_detector)
+importlib.reload(modules.rep_counter)
+importlib.reload(modules.geometry)
+importlib.reload(modules.debug_panel)
+importlib.reload(modules.database)
+
 from modules.pose_detector import PoseDetector
 from modules.rep_counter import SquatTracker
 from modules.geometry import calculate_angle
