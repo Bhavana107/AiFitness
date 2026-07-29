@@ -322,6 +322,8 @@ if run_feed:
         </div>
         """, unsafe_allow_html=True)
         
+        prev_time = 0
+        
         if st.session_state.session_start_time is None:
             st.session_state.session_start_time = time.time()
             st.session_state.fps_history = []
