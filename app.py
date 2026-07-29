@@ -135,9 +135,12 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Initialize session state for squat tracker (force overwrite if old class is cached)
-if "squat_counter" not in st.session_state or not isinstance(st.session_state.squat_counter, SquatTracker):
+# Initialize session state for squat tracker (force overwrite if old class or version is cached)
+if ("squat_counter" not in st.session_state 
+    or not isinstance(st.session_state.squat_counter, SquatTracker)
+    or not hasattr(st.session_state.squat_counter, "smoothed_left_elbow")):
     st.session_state.squat_counter = SquatTracker()
+
 
 if "session_start_time" not in st.session_state:
     st.session_state.session_start_time = None
