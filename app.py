@@ -2,6 +2,8 @@ import streamlit as st
 import cv2
 import time
 from modules.pose_detector import PoseDetector
+from modules.rep_counter import SquatTracker
+from modules.geometry import calculate_angle
 
 # ---------------------------------------------------------
 # Page Configuration & Aesthetics
@@ -128,6 +130,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# Initialize session state for squat tracker (force overwrite if old class is cached)
+if "squat_counter" not in st.session_state or not isinstance(st.session_state.squat_counter, SquatTracker):
+    st.session_state.squat_counter = SquatTracker()
+
 # ---------------------------------------------------------
 # UI Header
 # ---------------------------------------------------------
@@ -156,6 +162,8 @@ camera_index = st.sidebar.selectbox(
 
 # Pose overlay controls
 st.sidebar.markdown("### 🏃 Pose Estimation")
+if st.sidebar.button("Reset Rep Counter", width="stretch"):
+    st.session_state.squat_counter.reset()
 enable_pose = st.sidebar.toggle("Show Skeleton Overlay", value=True, help="Toggle drawing 33 pose skeletal landmarks on stream.")
 
 # Advanced Pose configuration
@@ -190,6 +198,9 @@ with col2:
     st.markdown("### 📈 Live Stats")
     
     status_placeholder = st.empty()
+    rep_placeholder = st.empty()
+    phase_placeholder = st.empty()
+    knee_angle_placeholder = st.empty()
     fps_placeholder = st.empty()
     resolution_placeholder = st.empty()
     
@@ -273,11 +284,154 @@ if run_feed:
                 # Run pose detection if enabled
                 if enable_pose:
                     results = detector.find_pose(frame_rgb)
-                    # Draw skeletal overlay landmarks onto the RGB frame
-                    frame_rgb = detector.draw_skeleton(frame_rgb, results, visibility_threshold=min_vis_conf)
-                
+                    
+                    # ---------------------------------------------------------
+                    # Squat Tracker Processing
+                    # ---------------------------------------------------------
+                    landmarks = detector.get_landmarks_list(results, width, height)
+                    if landmarks:
+                        # Extract joints
+                        l_shoulder = landmarks[11]
+                        r_shoulder = landmarks[12]
+                        l_hip = landmarks[23]
+                        r_hip = landmarks[24]
+                        l_knee = landmarks[25]
+                        r_knee = landmarks[26]
+                        l_ankle = landmarks[27]
+                        r_ankle = landmarks[28]
+                        
+                        # Check joint visibilities
+                        l_shoulder_valid = l_shoulder['visibility'] >= min_vis_conf
+                        r_shoulder_valid = r_shoulder['visibility'] >= min_vis_conf
+                        l_hip_valid = l_hip['visibility'] >= min_vis_conf
+                        r_hip_valid = r_hip['visibility'] >= min_vis_conf
+                        l_knee_valid = l_knee['visibility'] >= min_vis_conf
+                        r_knee_valid = r_knee['visibility'] >= min_vis_conf
+                        l_ankle_valid = l_ankle['visibility'] >= min_vis_conf
+                        r_ankle_valid = r_ankle['visibility'] >= min_vis_conf
+                        
+                        # Torso vertical coordinates (normalized Y)
+                        shoulder_y_norm = None
+                        if l_shoulder_valid and r_shoulder_valid:
+                            shoulder_y_norm = ((l_shoulder['y'] + r_shoulder['y']) / 2.0) / height
+                        elif l_shoulder_valid:
+                            shoulder_y_norm = l_shoulder['y'] / height
+                        elif r_shoulder_valid:
+                            shoulder_y_norm = r_shoulder['y'] / height
+                            
+                        hip_y_norm = None
+                        if l_hip_valid and r_hip_valid:
+                            hip_y_norm = ((l_hip['y'] + r_hip['y']) / 2.0) / height
+                        elif l_hip_valid:
+                            hip_y_norm = l_hip['y'] / height
+                        elif r_hip_valid:
+                            hip_y_norm = r_hip['y'] / height
+                            
+                        # Joint angles calculation
+                        l_knee_angle = None
+                        if l_hip_valid and l_knee_valid and l_ankle_valid:
+                            l_knee_angle = calculate_angle(
+                                (l_hip['x'], l_hip['y']),
+                                (l_knee['x'], l_knee['y']),
+                                (l_ankle['x'], l_ankle['y'])
+                            )
+                            
+                        r_knee_angle = None
+                        if r_hip_valid and r_knee_valid and r_ankle_valid:
+                            r_knee_angle = calculate_angle(
+                                (r_hip['x'], r_hip['y']),
+                                (r_knee['x'], r_knee['y']),
+                                (r_ankle['x'], r_ankle['y'])
+                            )
+                            
+                        l_hip_angle = None
+                        if l_shoulder_valid and l_hip_valid and l_knee_valid:
+                            l_hip_angle = calculate_angle(
+                                (l_shoulder['x'], l_shoulder['y']),
+                                (l_hip['x'], l_hip['y']),
+                                (l_knee['x'], l_knee['y'])
+                            )
+                            
+                        r_hip_angle = None
+                        if r_shoulder_valid and r_hip_valid and r_knee_valid:
+                            r_hip_angle = calculate_angle(
+                                (r_shoulder['x'], r_shoulder['y']),
+                                (r_hip['x'], r_hip['y']),
+                                (r_knee['x'], r_knee['y'])
+                            )
+                            
+                        # Update the tracker
+                        st.session_state.squat_counter.update(
+                            l_knee=l_knee_angle,
+                            r_knee=r_knee_angle,
+                            l_hip=l_hip_angle,
+                            r_hip=r_hip_angle,
+                            shoulder_y=shoulder_y_norm,
+                            hip_y=hip_y_norm
+                        )
+                        
+                    # Draw skeletal overlay landmarks and HUD overlay onto the RGB frame
+                    tracker = st.session_state.squat_counter
+                    frame_rgb = detector.draw_skeleton(
+                        frame_rgb, 
+                        results, 
+                        visibility_threshold=min_vis_conf,
+                        state=tracker.state,
+                        direction=tracker.direction,
+                        reps=tracker.rep_count,
+                        l_knee=tracker.smoothed_left_knee,
+                        r_knee=tracker.smoothed_right_knee,
+                        avg_knee=tracker.smoothed_avg_knee,
+                        avg_hip=tracker.smoothed_avg_hip
+                    )
+                else:
+                    # Draw empty HUD if pose detection is disabled
+                    tracker = st.session_state.squat_counter
+                    frame_rgb = detector.draw_skeleton(
+                        frame_rgb,
+                        None,
+                        visibility_threshold=min_vis_conf,
+                        state=tracker.state,
+                        direction=tracker.direction,
+                        reps=tracker.rep_count
+                    )
+
                 # Render the final processed frame in the streamlit image widget
                 feed_placeholder.image(frame_rgb, width="stretch")
+                
+                # Update rep counter and phase displays dynamically
+                counter = st.session_state.squat_counter
+                
+                rep_placeholder.markdown(f"""
+                <div class="metric-box" style="background: rgba(139, 92, 246, 0.08); border-color: rgba(139, 92, 246, 0.25);">
+                    <div class="metric-value" style="color: #C084FC; font-size: 2.8rem;">{counter.rep_count}</div>
+                    <div class="metric-label">Rep Count</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Determine theme color for phase
+                state_colors = {
+                    "STANDING": "#9CA3AF",      # Gray
+                    "DESCENDING": "#FBBF24",    # Amber/Yellow
+                    "BOTTOM": "#EF4444",        # Red
+                    "ASCENDING": "#10B981"      # Emerald/Green
+                }
+                phase_color = state_colors.get(counter.state, "#9CA3AF")
+                
+                phase_placeholder.markdown(f"""
+                <div class="metric-box" style="border-left: 4px solid {phase_color};">
+                    <div class="metric-value" style="color: {phase_color}; font-size: 1.6rem;">{counter.state}</div>
+                    <div class="metric-label">Squat Phase ({counter.direction})</div>
+                </div>
+                """, unsafe_allow_html=True)
+                
+                angle_str = f"{int(counter.smoothed_avg_knee)}°" if counter.smoothed_avg_knee > 0 else "--"
+                knee_angle_placeholder.markdown(f"""
+                <div class="metric-box">
+                    <div class="metric-value">{angle_str}</div>
+                    <div class="metric-label">Avg Knee Angle (Smoothed)</div>
+                </div>
+                """, unsafe_allow_html=True)
                 
                 # Calculate Frame Rate (FPS)
                 current_time = time.time()
@@ -306,6 +460,9 @@ if run_feed:
                 <div class="static-dot"></div> Stream Disconnected
             </div>
             """, unsafe_allow_html=True)
+            rep_placeholder.empty()
+            phase_placeholder.empty()
+            knee_angle_placeholder.empty()
             fps_placeholder.empty()
             resolution_placeholder.empty()
             feed_placeholder.warning("Webcam stream stopped.")
@@ -317,6 +474,9 @@ else:
         <div class="static-dot"></div> Stream Offline
     </div>
     """, unsafe_allow_html=True)
+    rep_placeholder.empty()
+    phase_placeholder.empty()
+    knee_angle_placeholder.empty()
     
     feed_placeholder.markdown("""
     <div style="border: 2px dashed rgba(255, 255, 255, 0.1); border-radius: 16px; padding: 5rem 2rem; text-align: center; background: rgba(255,255,255,0.01);">

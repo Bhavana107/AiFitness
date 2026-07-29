@@ -98,22 +98,44 @@ class PoseDetector:
         # Detect pose landmarks on the full frame
         return self.detector.detect(mp_image)
 
-    def draw_skeleton(self, frame_rgb, results, visibility_threshold: float = 0.5):
+    def draw_skeleton(
+        self, 
+        frame_rgb, 
+        results, 
+        visibility_threshold: float = 0.5,
+        state: str = None,
+        direction: str = None,
+        reps: int = None,
+        l_knee: float = None,
+        r_knee: float = None,
+        avg_knee: float = None,
+        avg_hip: float = None
+    ):
         """
         Draws the full 33 pose landmarks and connection skeleton on the frame.
         Filters joints and lines based on the visibility threshold to prevent 
         inaccuracies or jitter from occluded limbs (e.g. when lower body is hidden).
         Also calculates and displays joint angles for elbows, knees, and hips.
+        Renders a semi-transparent HUD overlay with motion analysis statistics if provided.
         
         Args:
             frame_rgb (np.ndarray): An RGB image frame (numpy array).
             results (PoseLandmarkerResult): Pose detection results.
             visibility_threshold (float): Minimum confidence required to draw a point/line.
+            state (str, optional): Current exercise FSM state.
+            direction (str, optional): Torso vertical movement direction.
+            reps (int, optional): Current repetition count.
+            l_knee (float, optional): Smoothed left knee angle.
+            r_knee (float, optional): Smoothed right knee angle.
+            avg_knee (float, optional): Smoothed average knee angle.
+            avg_hip (float, optional): Smoothed average hip angle.
             
         Returns:
-            np.ndarray: The modified RGB image frame with drawn landmarks.
+            np.ndarray: The modified RGB image frame.
         """
         if not results.pose_landmarks:
+            # Even if there are no landmarks, draw HUD if variables are passed
+            self._draw_hud(frame_rgb, state, direction, reps, l_knee, r_knee, avg_knee, avg_hip)
             return frame_rgb
         
         h, w, c = frame_rgb.shape
@@ -214,6 +236,64 @@ class PoseDetector:
                             1, 
                             cv2.LINE_AA
                         )
+        
+        # 4. Draw HUD box overlay
+        self._draw_hud(frame_rgb, state, direction, reps, l_knee, r_knee, avg_knee, avg_hip)
+        
+        return frame_rgb
+
+    def _draw_hud(self, frame_rgb, state, direction, reps, l_knee, r_knee, avg_knee, avg_hip):
+        """Draws a semi-transparent HUD overlay containing squat tracking statistics."""
+        if state is None and reps is None:
+            return
+            
+        h, w, c = frame_rgb.shape
+        
+        # Define HUD box bounds: width=305, height=235, top-left=(15, 15)
+        box_x1, box_y1 = 15, 15
+        box_x2, box_y2 = 320, 250
+        
+        # Ensure dimensions do not exceed the frame
+        box_x2 = min(box_x2, w - 10)
+        box_y2 = min(box_y2, h - 10)
+        
+        # Create blending copy
+        overlay = frame_rgb.copy()
+        # Draw dark rectangle on overlay copy
+        cv2.rectangle(overlay, (box_x1, box_y1), (box_x2, box_y2), (17, 24, 39), -1)
+        
+        # Blending transparent box onto the main frame
+        alpha = 0.75
+        cv2.addWeighted(overlay, alpha, frame_rgb, 1 - alpha, 0, frame_rgb)
+        
+        # Draw thin bounding border in electric purple: RGB (139, 92, 246)
+        cv2.rectangle(frame_rgb, (box_x1, box_y1), (box_x2, box_y2), (139, 92, 246), 1)
+        
+        # Text details
+        font = cv2.FONT_HERSHEY_DUPLEX
+        color_accent = (236, 72, 153) # Coral/Pink
+        color_text = (229, 231, 235)  # Light gray
+        
+        # Reps value details
+        reps_str = f"REPS: {reps}" if reps is not None else "REPS: 0"
+        state_str = f"STATE: {state}" if state is not None else "STATE: N/A"
+        dir_str = f"DIR: {direction}" if direction is not None else "DIR: STATIONARY"
+        
+        # Draw metrics
+        cv2.putText(frame_rgb, "AI COACH HUD", (box_x1 + 15, box_y1 + 25), font, 0.45, color_accent, 1, cv2.LINE_AA)
+        cv2.putText(frame_rgb, reps_str, (box_x1 + 15, box_y1 + 60), font, 0.75, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(frame_rgb, state_str, (box_x1 + 15, box_y1 + 95), font, 0.5, color_text, 1, cv2.LINE_AA)
+        cv2.putText(frame_rgb, dir_str, (box_x1 + 15, box_y1 + 122), font, 0.5, color_text, 1, cv2.LINE_AA)
+        
+        # Smooth angles formatting
+        l_knee_val = f"{int(l_knee)}°" if l_knee is not None and l_knee > 0 else "--"
+        r_knee_val = f"{int(r_knee)}°" if r_knee is not None and r_knee > 0 else "--"
+        avg_knee_val = f"{int(avg_knee)}°" if avg_knee is not None and avg_knee > 0 else "--"
+        avg_hip_val = f"{int(avg_hip)}°" if avg_hip is not None and avg_hip > 0 else "--"
+        
+        cv2.putText(frame_rgb, f"Knee L/R: {l_knee_val} / {r_knee_val}", (box_x1 + 15, box_y1 + 152), font, 0.42, color_text, 1, cv2.LINE_AA)
+        cv2.putText(frame_rgb, f"Avg Knee: {avg_knee_val}", (box_x1 + 15, box_y1 + 178), font, 0.42, color_text, 1, cv2.LINE_AA)
+        cv2.putText(frame_rgb, f"Avg Hip:  {avg_hip_val}", (box_x1 + 15, box_y1 + 204), font, 0.42, color_text, 1, cv2.LINE_AA)
                 
         return frame_rgb
         
